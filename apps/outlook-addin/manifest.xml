@@ -6,10 +6,10 @@
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Writing Assistant"/>
   <Description DefaultValue="AI writing assistant for Outlook composer"/>
-  <IconUrl DefaultValue="https://localhost:3000/icon.png"/>
-  <SupportUrl DefaultValue="https://localhost:3000/support"/>
+  <IconUrl DefaultValue="https://appdeveloper365.github.io/writing-assistant/icons/icon-192.png"/>
+  <SupportUrl DefaultValue="https://github.com/Appdeveloper365/writing-assistant"/>
   <AppDomains>
-    <AppDomain>https://localhost:3000</AppDomain>
+    <AppDomain>https://appdeveloper365.github.io</AppDomain>
   </AppDomains>
   <Hosts>
     <Host Name="Mailbox"/>
@@ -20,7 +20,7 @@
     </Sets>
   </Requirements>
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://localhost:3000/taskpane.html"/>
+    <SourceLocation DefaultValue="https://appdeveloper365.github.io/writing-assistant/outlook/taskpane.html"/>
   </DefaultSettings>
   <Permissions>ReadWriteMailbox</Permissions>
 </OfficeApp>
