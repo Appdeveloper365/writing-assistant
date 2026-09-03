@@ -1,5 +1,5 @@
 export default defineBackground(() => {
-  console.log('Writing Assistant background worker started');
+  console.log('Smart Paraphraser background worker started');
 
   browser.runtime.onMessage.addListener((rawMessage, _sender, sendResponse) => {
     const message = rawMessage as { type?: string };

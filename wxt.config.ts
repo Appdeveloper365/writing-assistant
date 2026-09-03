@@ -3,13 +3,13 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifest: {
-    name: 'Writing Assistant',
+    name: 'Smart Paraphraser',
     description: 'AI-powered writing assistant for grammar, spelling, and rewrite controls.',
     version: '0.1.0',
     permissions: ['storage', 'activeTab', 'scripting'],
     host_permissions: ['<all_urls>'],
     action: {
-      default_title: 'Writing Assistant',
+      default_title: 'Smart Paraphraser',
       default_popup: 'popup.html',
     },
     // WXT's manifest types don't include Edge-specific settings, but Edge accepts them.

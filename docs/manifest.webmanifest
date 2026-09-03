@@ -1,6 +1,6 @@
 {
-  "name": "Writing Assistant",
-  "short_name": "WritingAsst",
+  "name": "Smart Paraphraser",
+  "short_name": "Paraphraser",
   "description": "AI-powered writing assistant for grammar, spelling, and rewrite controls.",
   "start_url": "./",
   "scope": "./",

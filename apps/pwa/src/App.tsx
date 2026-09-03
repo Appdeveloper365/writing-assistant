@@ -16,7 +16,7 @@ export default function App() {
 
   return (
     <main style={{ fontFamily: 'sans-serif', padding: 24, maxWidth: 700, margin: '0 auto' }}>
-      <h1>Writing Assistant</h1>
+      <h1>Smart Paraphraser</h1>
       <p>Standalone PWA shell for the shared writing assistant logic.</p>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {tones.map((option) => (

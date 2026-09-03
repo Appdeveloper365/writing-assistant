@@ -265,7 +265,7 @@ function App() {
         <div className="wa-title-block">
           <div className="wa-brand-mark">✎</div>
           <div>
-            <h1>Writing Assistant</h1>
+            <h1>Smart Paraphraser</h1>
             <p>Choose how your AI rewrite runs.</p>
           </div>
         </div>

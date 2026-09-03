@@ -10,7 +10,7 @@ function render() {
   if (!root) return;
   root.innerHTML = `
     <div style="font-family: 'Segoe UI', sans-serif; padding: 16px; max-width: 420px;">
-      <h2 style="margin-top:0;">Writing Assistant</h2>
+      <h2 style="margin-top:0;">Smart Paraphraser</h2>
       <label for="tone" style="display:block; margin-bottom:4px; font-weight:600;">Tone</label>
       <select id="tone" style="width:100%; padding:6px; margin-bottom:12px;">
         <option value="professional">Professional</option>
