@@ -1,0 +1,3 @@
+[writing-assistant-extension-starter/LAUNCH-BRIEF.md](./LAUNCH-BRIEF.md)
+[writing-assistant-extension-starter/QA-CHECKLIST.md](./QA-CHECKLIST.md)
+[writing-assistant-extension-starter/RELEASE-MEMO.md](./RELEASE-MEMO.md)

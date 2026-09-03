@@ -1,0 +1,24 @@
+# Writing Assistant Extension Starter
+
+This session artifact is a working WXT + React browser extension starter for a writing assistant with:
+- private local grammar heuristics
+- selection-based rewrite actions
+- popup controls for tone and settings
+- background-service-worker message flow
+- request throttling and debouncing
+- gateway integration path
+- PII redaction and sanitization logic
+
+## Key paths
+- [writing-assistant-extension-starter/entrypoints/background.ts](./entrypoints/background.ts)
+- [writing-assistant-extension-starter/entrypoints/content.ts](./entrypoints/content.ts)
+- [writing-assistant-extension-starter/entrypoints/popup/main.tsx](./entrypoints/popup/main.tsx)
+- [writing-assistant-extension-starter/src/lib](./src/lib)
+- [writing-assistant-extension-starter/api-gateway/server.js](./api-gateway/server.js)
+- [writing-assistant-extension-starter/tests/gateway.test.js](./tests/gateway.test.js)
+- [writing-assistant-extension-starter/playwright.config.ts](./playwright.config.ts)
+
+## Validation
+- npm test ✅
+- npm run build ✅
+- Playwright tests ✅

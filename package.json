@@ -1,0 +1,28 @@
+{
+  "name": "writing-assistant-extension-starter",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "compile": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types tests/*.test.js",
+    "pw:test": "playwright test"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "@wxt-dev/module-react": "^1.0.0",
+    "playwright": "^1.49.1",
+    "typescript": "^5.6.2",
+    "wxt": "^0.19.0"
+  }
+}
