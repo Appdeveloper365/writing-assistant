@@ -12,10 +12,11 @@ export default defineConfig({
       default_title: 'Writing Assistant',
       default_popup: 'popup.html',
     },
+    // WXT's manifest types don't include Edge-specific settings, but Edge accepts them.
     browser_specific_settings: {
       edge: {
         minimum_edge_version: '122.0.0.0',
       },
-    },
+    } as any,
   },
 });

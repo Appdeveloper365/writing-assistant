@@ -1,4 +1,5 @@
-const runtimeEnv = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : {};
+const runtimeEnv: Record<string, string | undefined> =
+  typeof import.meta !== 'undefined' && import.meta.env ? (import.meta.env as Record<string, string | undefined>) : {};
 
 export type ProviderKind = 'local' | 'openai' | 'azure-openai' | 'anthropic' | 'openrouter';
 

@@ -1,7 +1,8 @@
 export default defineBackground(() => {
   console.log('Writing Assistant background worker started');
 
-  browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  browser.runtime.onMessage.addListener((rawMessage, _sender, sendResponse) => {
+    const message = rawMessage as { type?: string };
     if (message.type === 'TEXT_ANALYSIS_REQUEST') {
       sendResponse({
         type: 'TEXT_ANALYSIS_RESPONSE',
