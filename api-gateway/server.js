@@ -1,4 +1,13 @@
 import http from 'node:http';
+import {
+  cosineSimilarity,
+  embedText,
+  ensureModelReady,
+  generateRewriteWithOllama,
+  ollamaSettings,
+} from './ollama.js';
+import { SemanticCache } from './semanticCache.js';
+import { cancelEngineSetup, getSetupState, startEngineSetup } from './engineSetup.js';
 
 const configuredKey = process.env.WRITING_ASSISTANT_API_KEY || process.env.EXTENSION_API_KEY || 'demo-local-key';
 const openAiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_KEY || '';
@@ -8,6 +17,77 @@ const maxTextLength = Number(process.env.MAX_REWRITE_TEXT_LENGTH || 4000);
 const rateWindowMs = Number(process.env.REWRITE_RATE_WINDOW_MS || 60000);
 const maxRequestsPerWindow = Number(process.env.REWRITE_MAX_REQUESTS_PER_WINDOW || 20);
 const requestBuckets = new Map();
+
+const semanticCacheEnabled = String(process.env.SEMANTIC_CACHE_ENABLED ?? 'true').trim().toLowerCase() !== 'false';
+const semanticCache = semanticCacheEnabled ? new SemanticCache() : null;
+if (semanticCache) {
+  const restored = semanticCache.load();
+  if (restored > 0) {
+    console.log(`[gateway] Restored ${restored} cached rewrite result(s) from disk.`);
+  }
+}
+
+const engineRetryCooldownMs = Number(process.env.OLLAMA_ENGINE_RETRY_MS || 60000) || 60000;
+
+const engineState = {
+  available: false,
+  ready: false,
+  modelCached: false,
+  warmed: false,
+  lastWarmAt: null,
+  reason: 'warming',
+};
+
+let engineTask = null;
+let lastEngineAttemptAt = 0;
+
+function warmEngine() {
+  // Single-flight: join an in-progress pull/warm instead of starting another one.
+  if (engineTask) {
+    return engineTask;
+  }
+
+  engineTask = (async () => {
+    try {
+      const result = await ensureModelReady();
+      engineState.available = Boolean(result.available);
+      engineState.ready = Boolean(result.ready);
+      engineState.modelCached = Boolean(result.modelCached);
+      engineState.warmed = Boolean(result.warmed);
+      engineState.lastWarmAt = new Date().toISOString();
+      engineState.reason = result.reason ?? null;
+
+      if (result.ready) {
+        console.log(`[gateway] Ollama AI engine ready: ${result.model} cached${result.warmed ? ' and loaded in memory' : ''}.`);
+      }
+    } catch (error) {
+      engineState.ready = false;
+      engineState.reason = error instanceof Error ? error.message : 'warm-failed';
+    } finally {
+      lastEngineAttemptAt = Date.now();
+      engineTask = null;
+    }
+  })();
+
+  return engineTask;
+}
+
+async function rankVariantsByFidelity(sourceEmbedding, variants) {
+  if (!Array.isArray(sourceEmbedding) || !Array.isArray(variants) || variants.length < 2) {
+    return variants;
+  }
+
+  const scored = [];
+  for (const variant of variants) {
+    const vector = await embedText(variant);
+    if (!vector) {
+      return variants;
+    }
+    scored.push({ variant, score: cosineSimilarity(sourceEmbedding, vector) });
+  }
+
+  return scored.sort((a, b) => b.score - a.score).map((item) => item.variant);
+}
 
 function redactSensitiveText(value = '') {
   return String(value)
@@ -191,11 +271,79 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       mode: openAiKey || openRouterKey ? 'remote' : 'local',
+      engine: {
+        provider: 'ollama',
+        host: ollamaSettings.host,
+        generateModel: ollamaSettings.generateModel || null,
+        embedModel: ollamaSettings.embedModel || null,
+        setup: getSetupState(),
+        available: engineState.available,
+        modelCached: engineState.modelCached,
+        warm: engineState.ready,
+        warming: Boolean(engineTask),
+        warmed: engineState.warmed,
+        lastWarmAt: engineState.lastWarmAt,
+        reason: engineState.reason,
+      },
+      semanticCache: semanticCache ? semanticCache.snapshot() : { enabled: false },
       rateLimit: {
         windowMs: rateWindowMs,
         maxRequestsPerWindow,
       },
     }));
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/engine/setup') {
+    if (!isAuthorized(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+      return;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getSetupState()));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/engine/setup') {
+    if (!isAuthorized(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+      return;
+    }
+
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 8 * 1024) {
+        req.destroy();
+      }
+    });
+
+    req.on('end', async () => {
+      try {
+        const payload = body ? JSON.parse(body) : {};
+        const state = await startEngineSetup({ model: payload.model });
+        res.writeHead(202, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(state));
+      } catch (error) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error instanceof Error ? error.message : 'invalid request' }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/engine/setup/cancel') {
+    if (!isAuthorized(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+      return;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(cancelEngineSetup()));
     return;
   }
 
@@ -227,10 +375,49 @@ const server = http.createServer(async (req, res) => {
         const safePayload = validatePayload(payload);
         const provider = safePayload.provider;
 
-        let variants = null;
+        // First-use download: when the engine model is not ready yet, pull + warm it
+        // in the background (single-flight, cooldown-limited) so later requests can be
+        // answered by the on-device engine instead of the heuristic fallback.
+        if (
+          ollamaSettings.generateModel &&
+          !engineState.ready &&
+          Date.now() - lastEngineAttemptAt > engineRetryCooldownMs
+        ) {
+          void warmEngine();
+        }
+
+        // 1) Serve from the semantic cache when this exact request (or a near-identical
+        //    rewording of it) was already answered by the cached AI engine.
+        const sourceEmbedding = semanticCache || ollamaSettings.rankVariants
+          ? await embedText(safePayload.text)
+          : null;
+
+        if (semanticCache) {
+          const cached = semanticCache.lookup({
+            text: safePayload.text,
+            tone: safePayload.tone,
+            fidelity: safePayload.fidelity,
+            length: safePayload.length,
+            embedding: sourceEmbedding,
+          });
+
+          if (cached) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              variants: cached.variants,
+              model: cached.model || 'ollama-semantic-cache',
+              status: 'ok',
+              cache: cached.kind,
+              similarity: cached.similarity,
+            }));
+            return;
+          }
+        }
+
+        let cloudVariants = null;
         if (safePayload.cloudEnabled) {
           if (provider === 'openrouter') {
-            variants = await generateWithOpenRouter(
+            cloudVariants = await generateWithOpenRouter(
               safePayload.text,
               safePayload.tone,
               safePayload.fidelity,
@@ -239,7 +426,7 @@ const server = http.createServer(async (req, res) => {
               safePayload.model,
             );
           } else if (openAiKey) {
-            variants = await generateWithOpenAI(
+            cloudVariants = await generateWithOpenAI(
               safePayload.text,
               safePayload.tone,
               safePayload.fidelity,
@@ -249,15 +436,59 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
-        const finalVariants = variants && variants.length > 0 ? variants : buildFallbackVariants(safePayload.text, safePayload.tone);
-        const usedRemote = safePayload.cloudEnabled && variants && variants.length > 0 && ((provider === 'openrouter' && safePayload.apiKey) || openAiKey);
-        const modelName = usedRemote ? (safePayload.model || 'gpt-4o-mini') : 'local-gateway-stub';
+        // 2) On-device generation with the local Ollama chat model (default engine:
+        //    gemma2:2b). Disable with OLLAMA_GENERATE_MODEL=false.
+        let ollamaVariants = null;
+        if (!cloudVariants && ollamaSettings.generateModel) {
+          const generated = await generateRewriteWithOllama({
+            text: redactSensitiveText(safePayload.text),
+            tone: safePayload.tone,
+            fidelity: safePayload.fidelity,
+            length: safePayload.length,
+          });
+
+          if (generated && generated.length > 0) {
+            ollamaVariants = generated
+              .map((item) => sanitizeResponse(item))
+              .filter(Boolean);
+          }
+        }
+
+        const generatedVariants = cloudVariants && cloudVariants.length > 0
+          ? cloudVariants
+          : (ollamaVariants && ollamaVariants.length > 0 ? ollamaVariants : null);
+        let finalVariants = generatedVariants || buildFallbackVariants(safePayload.text, safePayload.tone);
+
+        // 3) Rank candidate variants by semantic fidelity to the source using the
+        //    optional Ollama embedding model (only when OLLAMA_EMBED_MODEL is set).
+        if (sourceEmbedding && ollamaSettings.rankVariants) {
+          finalVariants = await rankVariantsByFidelity(sourceEmbedding, finalVariants);
+        }
+
+        const usedRemote = safePayload.cloudEnabled && cloudVariants && cloudVariants.length > 0 && ((provider === 'openrouter' && safePayload.apiKey) || openAiKey);
+        const modelName = ollamaVariants && ollamaVariants.length > 0
+          ? ollamaSettings.generateModel
+          : (usedRemote ? (safePayload.model || 'gpt-4o-mini') : 'local-gateway-stub');
+
+        // 4) Store the fresh result so later requests are answered instantly.
+        if (semanticCache && finalVariants.length > 0) {
+          semanticCache.store({
+            text: safePayload.text,
+            tone: safePayload.tone,
+            fidelity: safePayload.fidelity,
+            length: safePayload.length,
+            embedding: sourceEmbedding,
+            variants: finalVariants,
+            model: modelName,
+          });
+        }
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           variants: finalVariants,
           model: modelName,
           status: 'ok',
+          ...(semanticCache ? { cache: 'miss' } : {}),
         }));
       } catch (error) {
         const message = error instanceof Error ? error.message : 'invalid request';
@@ -275,4 +506,22 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(Number(process.env.PORT || 3001), () => {
   console.log(`Writing assistant gateway listening on http://localhost:${process.env.PORT || 3001}`);
+
+  // Warm the cached AI engine right away so it is ready for the first user request.
+  void warmEngine();
+
+  // Keep the model resident (and persist the cache) over long-running sessions.
+  const rewarmIntervalMs = Number(process.env.OLLAMA_REWARM_INTERVAL_MS || 30 * 60 * 1000);
+  if (Number.isFinite(rewarmIntervalMs) && rewarmIntervalMs > 0) {
+    const timer = setInterval(() => {
+      void warmEngine();
+      if (semanticCache) {
+        semanticCache.save();
+      }
+    }, rewarmIntervalMs);
+
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+  }
 });

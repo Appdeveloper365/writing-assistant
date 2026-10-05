@@ -1,5 +1,5 @@
 import { writeAssistantConfig } from '../src/lib/config';
-import { requestRewriteFromGateway } from '../src/lib/apiClient';
+import { requestLocalRewriteFromGateway, requestRewriteFromGateway } from '../src/lib/apiClient';
 import { loadSettings, saveSettings } from '../src/lib/settings';
 
 const runtimeApi = (globalThis as any).browser ?? (globalThis as any).chrome;
@@ -32,7 +32,6 @@ export default defineBackground(() => {
         const provider = (message.provider ?? settings.remoteProvider ?? 'openai');
         const model = (message.model ?? settings.remoteModel ?? 'gpt-4o-mini').trim();
         const apiKey = (message.apiKey ?? settings.apiKey ?? '').trim();
-        const localAiEnabled =Boolean(message.localAiEnabled ?? settings.localAiEnabled ?? false);
         const userOwnsRemoteKey = mode === 'remote' && apiKey.length > 0;
 
         if (mode === 'off') {
@@ -45,7 +44,30 @@ export default defineBackground(() => {
           return;
         }
 
-        if (mode === 'local' && localAiEnabled) {
+        if (mode === 'local') {
+          // Try the cached local engine (gateway + Ollama) first, then fall back to
+          // on-device heuristics when the gateway or Ollama engine is not available.
+          if (writeAssistantConfig.localViaGateway) {
+            try {
+              const result = await requestLocalRewriteFromGateway(message.text, message.tone);
+              const variants = Array.isArray(result?.variants)
+                ? result.variants.filter((variant: unknown) => typeof variant === 'string' && variant.trim())
+                : [];
+
+              if (variants.length > 0) {
+                sendResponse({
+                  type: 'REWRITE_RESPONSE',
+                  variants,
+                  model: result.model ?? 'local-ai',
+                  status: result.status ?? 'ok',
+                });
+                return;
+              }
+            } catch {
+              // Gateway unreachable or engine not ready — continue with heuristics.
+            }
+          }
+
           sendResponse(buildLocalRewriteResponse(message.text, message.tone));
           return;
         }

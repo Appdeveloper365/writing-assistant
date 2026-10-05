@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { validateRemoteAiSettings, type LocalModelEntry } from '../../src/lib/settings';
+import { cancelGatewayEngineSetup, downloadOllamaModel, fetchGatewayEngineSetup, fetchOllamaEngineStatus, isAutoDownloadEnabled, startGatewayEngineSetup, warmOllamaEngine, type EngineSetupState, type OllamaEngineStatus } from '../../src/lib/ollamaEngine';
 import '../styles.css';
 
 const tones = ['professional', 'casual', 'concise', 'creative'] as const;
@@ -48,6 +49,16 @@ function App() {
   const [enabled, setEnabled] = React.useState(true);
   const [requireConfirmation, setRequireConfirmation] = React.useState(true);
   const [showPreview, setShowPreview] = React.useState(true);
+  const [ollamaStatus, setOllamaStatus] = React.useState<OllamaEngineStatus | null>(null);
+  const [ollamaBusy, setOllamaBusy] = React.useState<'check' | 'warm' | null>(null);
+  const [ollamaDownloading, setOllamaDownloading] = React.useState(false);
+  const [ollamaProgress, setOllamaProgress] = React.useState(0);
+  const [ollamaDownloadStatus, setOllamaDownloadStatus] = React.useState('');
+  const ollamaAbortRef = React.useRef<AbortController | null>(null);
+  const ollamaDownloadStartedRef = React.useRef(false);
+  const [gatewaySetup, setGatewaySetup] = React.useState<EngineSetupState | null>(null);
+  const [gatewaySetupBusy, setGatewaySetupBusy] = React.useState(false);
+  const gatewaySetupPollingRef = React.useRef(false);
 
   React.useEffect(() => {
     const fetchSettings = async () => {
@@ -121,6 +132,138 @@ function App() {
       // keep the UI responsive even if storage fails
     }
   };
+
+  const checkOllamaEngine = async (kind: 'check' | 'warm' = 'check') => {
+    setOllamaBusy(kind);
+    try {
+      const status = kind === 'warm' ? await warmOllamaEngine() : await fetchOllamaEngineStatus();
+      setOllamaStatus(status);
+    } finally {
+      setOllamaBusy(null);
+    }
+  };
+
+  const startOllamaDownload = async () => {
+    if (ollamaDownloadStartedRef.current) {
+      return;
+    }
+    ollamaDownloadStartedRef.current = true;
+    const controller = new AbortController();
+    ollamaAbortRef.current = controller;
+    setOllamaDownloading(true);
+    setOllamaProgress(0);
+    setOllamaDownloadStatus('Starting download…');
+
+    try {
+      const status = await downloadOllamaModel((update) => {
+        setOllamaProgress(update.percent);
+        setOllamaDownloadStatus(update.status);
+      }, { signal: controller.signal });
+      setOllamaStatus(status);
+    } finally {
+      ollamaDownloadStartedRef.current = false;
+      ollamaAbortRef.current = null;
+      setOllamaDownloading(false);
+    }
+  };
+
+  const stopOllamaDownload = () => {
+    ollamaAbortRef.current?.abort();
+    ollamaAbortRef.current = null;
+    ollamaDownloadStartedRef.current = false;
+    setOllamaDownloading(false);
+  };
+
+  const pollGatewaySetup = async () => {
+    if (gatewaySetupPollingRef.current) {
+      return;
+    }
+    gatewaySetupPollingRef.current = true;
+    try {
+      // Keep polling while the gateway-owned setup is active.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const current = await fetchGatewayEngineSetup();
+        if (!current) {
+          break;
+        }
+        setGatewaySetup(current);
+        if (!current.running) {
+          // Engine settled (ready/error) — resync the cached-engine status line.
+          const status = await fetchOllamaEngineStatus();
+          setOllamaStatus(status);
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+    } finally {
+      gatewaySetupPollingRef.current = false;
+    }
+  };
+
+  const stopGatewaySetup = async () => {
+    const stopped = await cancelGatewayEngineSetup();
+    if (stopped) {
+      setGatewaySetup(stopped);
+    }
+    setGatewaySetupBusy(false);
+  };
+
+  const engineNeedsDownload = !ollamaStatus || !ollamaStatus.available || !ollamaStatus.modelCached;
+
+  const handleEngineDownload = async () => {
+    if (!engineNeedsDownload) {
+      await checkOllamaEngine('warm');
+      return;
+    }
+
+    setGatewaySetupBusy(true);
+    try {
+      // Prefer the gateway-managed preset setup: it installs Ollama when the
+      // service is missing, then downloads gemma2:2b and warms it — under one label.
+      const started = await startGatewayEngineSetup();
+      if (started) {
+        setGatewaySetup(started);
+        await pollGatewaySetup();
+        return;
+      }
+
+      // Gateway unreachable: fall back to pulling the model straight into an
+      // already-running Ollama (or refresh the status line if Ollama is missing).
+      if (ollamaStatus?.available) {
+        await startOllamaDownload();
+      } else {
+        setOllamaStatus(await fetchOllamaEngineStatus());
+      }
+    } finally {
+      setGatewaySetupBusy(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (aiMode !== 'local') {
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const status = await fetchOllamaEngineStatus();
+      if (cancelled) {
+        return;
+      }
+      setOllamaStatus(status);
+
+      // First use: Ollama is running but the engine model is not cached yet —
+      // download it right away so the AI engine becomes ready for the user.
+      if (status.available && !status.modelCached && isAutoDownloadEnabled()) {
+        void handleEngineDownload();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [aiMode]);
 
   const remoteValidation = validateRemoteAiSettings({ aiMode, remoteProvider, apiKey });
 
@@ -259,6 +402,12 @@ function App() {
     ? `${localModelName || localModelHistory[0].name} is available for Local AI.`
     : 'Select a model file to enable Local AI. The extension will remember it for future sessions.';
 
+  const ollamaStatusLabel = ollamaStatus?.available && ollamaStatus.modelCached
+    ? 'Ollama engine ready'
+    : ollamaStatus?.available
+      ? 'Ollama detected — model not cached'
+      : 'Ollama engine not detected';
+
   return (
     <main className="wa-popup">
       <div className="wa-popup-card">
@@ -321,6 +470,77 @@ function App() {
               <strong>{localStatusLabel}</strong>
               <span>{localStatusDescription}</span>
             </div>
+
+            <label className="wa-section-label">Ollama cached engine</label>
+            <div className={ollamaStatus?.available && ollamaStatus.modelCached ? 'wa-remote-status ok' : 'wa-remote-status warning'}>
+              <strong>{ollamaStatusLabel}</strong>
+              <span>{ollamaStatus?.message ?? 'Checking the local Ollama engine…'}</span>
+            </div>
+
+            {ollamaDownloading && (
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ height: 8, background: 'rgba(148, 163, 184, 0.35)', borderRadius: 999, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${ollamaProgress}%`, background: '#2563eb', borderRadius: 999, transition: 'width 200ms ease' }} />
+                </div>
+                <span className="wa-small-copy" style={{ margin: 0 }}>
+                  Downloading {ollamaStatus?.model ?? 'engine model'} — {ollamaProgress}% ({ollamaDownloadStatus}). Keep this popup open.
+                </span>
+              </div>
+            )}
+
+            {gatewaySetup?.running && (
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ height: 8, background: 'rgba(148, 163, 184, 0.35)', borderRadius: 999, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.max(0, Math.min(100, gatewaySetup.percent))}%`, background: '#2563eb', borderRadius: 999, transition: 'width 200ms ease' }} />
+                </div>
+                <span className="wa-small-copy" style={{ margin: 0 }}>
+                  Ollama with Gemma is downloading — {Math.max(0, Math.min(100, Math.round(gatewaySetup.percent)))}% ({gatewaySetup.message}). Keep this popup open.
+                </span>
+              </div>
+            )}
+
+            {!gatewaySetup?.running && gatewaySetup && ['error', 'cancelled'].includes(gatewaySetup.phase) && (
+              <div className="wa-remote-status warning">
+                <strong>Engine setup needs attention</strong>
+                <span>{gatewaySetup.message}</span>
+              </div>
+            )}
+
+            <div className="wa-mode-grid">
+              <button type="button" className="wa-action-button" onClick={() => void checkOllamaEngine('check')} disabled={ollamaBusy !== null || ollamaDownloading || gatewaySetupBusy}>
+                {ollamaBusy === 'check' ? 'Checking…' : 'Check engine'}
+              </button>
+              {gatewaySetup?.running ? (
+                <button type="button" className="wa-action-button" onClick={() => void stopGatewaySetup()}>
+                  Stop download
+                </button>
+              ) : ollamaDownloading ? (
+                <button type="button" className="wa-action-button" onClick={stopOllamaDownload}>
+                  Stop download
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="wa-action-button"
+                  onClick={() => void handleEngineDownload()}
+                  disabled={ollamaBusy !== null || gatewaySetupBusy}
+                >
+                  {ollamaBusy === 'warm'
+                    ? 'Warming…'
+                    : gatewaySetupBusy
+                      ? 'Downloading…'
+                      : engineNeedsDownload
+                        ? 'Download Ollama + Gemma'
+                        : 'Warm up engine'}
+                </button>
+              )}
+            </div>
+
+            {ollamaStatus && (
+              <p className="wa-small-copy">
+                {ollamaStatus.model} @ {ollamaStatus.host} — press Download and everything (Ollama + Gemma) installs internally.
+              </p>
+            )}
           </div>
         )}
 

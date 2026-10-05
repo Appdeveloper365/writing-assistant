@@ -9,6 +9,7 @@
     "zip": "wxt zip",
     "compile": "tsc --noEmit",
     "test": "node --test --experimental-strip-types tests/*.test.js",
+    "ai:warm": "node scripts/cache-ollama-model.mjs",
     "pw:test": "playwright test"
   },
   "dependencies": {

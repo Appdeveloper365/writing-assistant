@@ -21,5 +21,6 @@ test('rewrite endpoint returns candidate variants', async ({ request }) => {
   const body = await response.json();
   expect(Array.isArray(body.variants)).toBeTruthy();
   expect(body.variants.length).toBeGreaterThan(0);
-  expect(body.model).toBe('local-gateway-stub');
+  // Stub without Ollama, or the on-device engine model when gemma2:2b is cached.
+  expect(['local-gateway-stub', 'gemma2:2b']).toContain(body.model);
 });

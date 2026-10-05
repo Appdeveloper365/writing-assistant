@@ -14,6 +14,11 @@ export const writeAssistantConfig = {
   debounceMs: Number(runtimeEnv.VITE_DEBOUNCE_MS ?? 250),
   rateLimitPerSecond: Number(runtimeEnv.VITE_RATE_LIMIT_PER_SECOND ?? 3),
   requestTimeoutMs: Number(runtimeEnv.VITE_REQUEST_TIMEOUT_MS ?? 12000),
+  ollamaHost: String(runtimeEnv.VITE_OLLAMA_HOST ?? 'http://127.0.0.1:11434'),
+  ollamaGenerateModel: String(runtimeEnv.VITE_OLLAMA_GENERATE_MODEL ?? 'gemma2:2b'),
+  ollamaEmbedModel: String(runtimeEnv.VITE_OLLAMA_EMBED_MODEL ?? ''),
+  ollamaAutoDownload: String(runtimeEnv.VITE_OLLAMA_AUTO_DOWNLOAD ?? 'true').trim().toLowerCase() !== 'false',
+  localViaGateway: String(runtimeEnv.VITE_LOCAL_VIA_GATEWAY ?? 'true').trim().toLowerCase() !== 'false',
 };
 
 export function isCloudProviderEnabled() {

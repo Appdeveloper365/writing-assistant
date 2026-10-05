@@ -59,3 +59,38 @@ export async function requestRewriteFromGateway(
 
   return await response.json();
 }
+
+/**
+ * Local AI mode request: routes through the gateway so the cached Ollama engine
+ * (semantic cache + optional on-device generation) can answer. Cloud generation is
+ * explicitly disabled; the gateway falls back to local heuristics when the engine
+ * is unavailable, and the caller falls back to heuristics when the gateway is down.
+ */
+export async function requestLocalRewriteFromGateway(text: string, tone: string) {
+  const payload: GatewayRewritePayload = {
+    text,
+    tone,
+    fidelity: 'balanced',
+    length: 'same',
+    cloudEnabled: false,
+    provider: 'local',
+  };
+
+  const response = await fetch(writeAssistantConfig.gatewayUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${writeAssistantConfig.extensionApiKey}`,
+      'X-Extension-Key': writeAssistantConfig.extensionApiKey,
+      'X-Provider': 'local',
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(writeAssistantConfig.requestTimeoutMs),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gateway returned an error: ${response.status}`);
+  }
+
+  return await response.json();
+}
